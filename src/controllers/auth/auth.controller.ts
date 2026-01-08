@@ -4,7 +4,12 @@ import { User } from "../../models/user.model";
 import { checkPassword, hashPassword } from "../../lib/hash";
 import jwt from "jsonwebtoken";
 import { sendEmail } from "../../lib/email";
-import { createAccessToken, createRefreshToken } from "../../lib/token";
+import {
+  createAccessToken,
+  createRefreshToken,
+  verifyRefreshToken,
+} from "../../lib/token";
+import { is } from "zod/v4/locales";
 
 function getAppUrl() {
   return process.env.App_URL || `http://localhost:${process.env.PORT}`;
@@ -175,6 +180,62 @@ export async function loginHandler(req: Request, res: Response) {
     return res.json({
       message: "Login successful",
       accessToken,
+      user: {
+        id: user.id,
+        email: user.email,
+        role: user.role,
+        isEmailVerified: user.isEmailVerified,
+        twoFactorEnabled: user.twoFactorEnabled,
+      },
+    });
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({
+      message: "Internal server error",
+    });
+  }
+}
+
+export async function refreshTokenHandler(req: Request, res: Response) {
+  try {
+    const token = req.cookies?.refreshToken as string | undefined;
+
+    if (!token) {
+      return res.status(401).json({ message: "Refresh token missing" });
+    }
+
+    const payload = verifyRefreshToken(token);
+
+    const user = await User.findById(payload.sub);
+
+    if (!user) {
+      return res.status(401).json({ message: "user not found" });
+    }
+
+    if (user.tokenVersion !== payload.tokenVersion) {
+      return res.status(401).json({ message: "refresh token invalidated" });
+    }
+
+    const newAccessToken = createAccessToken(
+      user.id,
+      user.role,
+      user.tokenVersion
+    );
+
+    const newRefreshToken = createRefreshToken(user.id, user.tokenVersion);
+
+    const isProd = process.env.NODE_ENV === "production";
+
+    res.cookie("refreshToken", newRefreshToken, {
+      httpOnly: true,
+      secure: isProd,
+      sameSite: "lax",
+      maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
+    });
+
+    return res.status(200).json({
+      message: "Tokens refreshed successfully",
+      accessToken: newAccessToken,
       user: {
         id: user.id,
         email: user.email,
