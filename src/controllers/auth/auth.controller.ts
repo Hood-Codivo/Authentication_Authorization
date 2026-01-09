@@ -251,3 +251,29 @@ export async function refreshTokenHandler(req: Request, res: Response) {
     });
   }
 }
+
+export async function logOutHandler(req: Request, res: Response) {
+  res.clearCookie("refreshToken", { path: "/" });
+
+  return res.status(200).json({
+    message: "Logged out successfully",
+  });
+}
+
+export async function forgotPasswordHandler(req: Request, res: Response) {
+  const { email } = req.body as { email?: string };
+
+  if (!email) {
+    return res.status(400).json({ message: "Email is required" });
+  }
+  const normalizedEmail = email.toLowerCase().trim();
+
+  try {
+  } catch (error) {}
+
+  try {
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ message: "Internal server error" });
+  }
+}
