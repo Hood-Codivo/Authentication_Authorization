@@ -9,7 +9,7 @@ import {
   createRefreshToken,
   verifyRefreshToken,
 } from "../../lib/token";
-import { is } from "zod/v4/locales";
+import crypto from "crypto";
 
 function getAppUrl() {
   return process.env.App_URL || `http://localhost:${process.env.PORT}`;
@@ -261,6 +261,10 @@ export async function logOutHandler(req: Request, res: Response) {
 }
 
 export async function forgotPasswordHandler(req: Request, res: Response) {
+  if (!req.body) {
+    return res.status(400).json({ message: "Request body is empty" });
+  }
+
   const { email } = req.body as { email?: string };
 
   if (!email) {
@@ -269,11 +273,90 @@ export async function forgotPasswordHandler(req: Request, res: Response) {
   const normalizedEmail = email.toLowerCase().trim();
 
   try {
-  } catch (error) {}
+    const user = await User.findOne({ email: normalizedEmail });
 
-  try {
+    if (!user) {
+      return res.json({
+        message:
+          "If an account with this email exists, a password reset link has been sent.",
+      });
+    }
+
+    const rawToken = crypto.randomBytes(32).toString("hex");
+
+    const tokenHash = crypto
+      .createHash("sha256")
+      .update(rawToken)
+      .digest("hex");
+
+    user.resetPasswordToken = tokenHash;
+    user.resetPasswordExpires = new Date(Date.now() + 15 * 60 * 1000); // 15 minutes
+
+    await user.save();
+
+    const resetUrl = `${getAppUrl()}/auth/reset-password?token=${rawToken}`;
+
+    await sendEmail(
+      user.email,
+      "Reset your password",
+      `<p>You have requested a password reset. Please click the link below to reset your password:</p>
+      <p><a href="${resetUrl}">Reset Password ${resetUrl}</a></p>`
+    );
+    return res.json({
+      message:
+        "If an account with this email exists, a password reset link has been sent.",
+    });
   } catch (error) {
     console.error(error);
     return res.status(500).json({ message: "Internal server error" });
+  }
+}
+
+export async function resetPasswordHandler(req: Request, res: Response) {
+  // Accept token from both query params and body
+  let token =
+    (req.body as { token?: string }).token || (req.query.token as string);
+  const { password } = req.body as { password?: string };
+
+  if (!token) {
+    return res.status(400).json({ message: "Reset token is missing" });
+  }
+  if (!password || password.length < 6) {
+    return res
+      .status(400)
+      .json({ message: "Password must be at least 6 characters long" });
+  }
+
+  try {
+    const tokenHash = crypto.createHash("sha256").update(token).digest("hex");
+
+    const user = await User.findOne({
+      resetPasswordToken: tokenHash,
+      resetPasswordExpires: { $gt: new Date() },
+    });
+
+    if (!user) {
+      return res.status(400).json({
+        message: "Invalid or expired reset token",
+      });
+    }
+
+    const newPasswordHash = await hashPassword(password);
+
+    user.passwordHash = newPasswordHash;
+    user.resetPasswordToken = null;
+    user.resetPasswordExpires = null;
+
+    user.tokenVersion = user.tokenVersion + 1;
+
+    await user.save();
+
+    return res.json({
+      message: "Password has been reset successfully",
+    });
+  } catch (error) {
+    return res.status(500).json({
+      message: "Internal server error",
+    });
   }
 }

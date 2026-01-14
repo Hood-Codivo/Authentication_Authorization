@@ -31,7 +31,7 @@ const userSchema = new Schema(
     },
     twoFactorSecret: {
       type: String,
-      default: undefined,
+      default: null,
     },
     tokenVersion: {
       type: Number,
@@ -39,11 +39,11 @@ const userSchema = new Schema(
     },
     resetPasswordToken: {
       type: String,
-      default: undefined,
+      default: null,
     },
     resetPasswordExpires: {
       type: Date,
-      default: undefined,
+      default: null,
     },
   },
   {

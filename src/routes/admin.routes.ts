@@ -1,0 +1,40 @@
+import { Request, Response, NextFunction, Router } from "express";
+import requireAuth from "../middleware/requireAuth";
+import requireRole from "../middleware/requireRole";
+import { User } from "../models/user.model";
+import { email } from "zod";
+
+const router = Router();
+
+router.get(
+  "/users",
+  requireAuth,
+  requireRole("admin"),
+  async (req: Request, res: Response) => {
+    try {
+      const users = await User.find(
+        {},
+        {
+          email: 1,
+          role: 1,
+          isEmailVerified: 1,
+          createdAt: 1,
+        }
+      ).sort({ createdAt: -1 });
+
+      const result = users.map((u) => ({
+        id: u._id,
+        email: u.email,
+        role: u.role,
+        isEmailVerified: u.isEmailVerified,
+        createdAt: u.createdAt,
+      }));
+      return res.json({ users: result });
+    } catch (error) {
+      console.error(error);
+      return res.status(500).json({ message: "Server error" });
+    }
+  }
+);
+
+export default router;
