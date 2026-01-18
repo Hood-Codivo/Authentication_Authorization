@@ -10,9 +10,29 @@ import {
   verifyRefreshToken,
 } from "../../lib/token";
 import crypto from "crypto";
+import { OAuth2Client } from "google-auth-library";
+import * authenticator  from "otplib";
+
+
 
 function getAppUrl() {
   return process.env.App_URL || `http://localhost:${process.env.PORT}`;
+}
+
+function getGoogleClient() {
+  const clientId = process.env.GOOGLE_CLIENT_ID;
+  const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
+  const redirectUri = process.env.GOOGLE_REDIRECT_URI;
+
+  if (!clientId || !clientSecret) {
+    throw new Error("Google client and secret not found");
+  }
+
+  return new OAuth2Client({
+    clientId,
+    clientSecret,
+    ...(redirectUri && { redirectUri }),
+  });
 }
 
 export async function registerHandler(req: Request, res: Response) {
@@ -134,7 +154,7 @@ export async function loginHandler(req: Request, res: Response) {
       });
     }
 
-    const { email, password } = result.data;
+    const { email, password, twoFactorCode } = result.data;
 
     const normalizedEmail = email.toLowerCase().trim();
 
@@ -143,6 +163,13 @@ export async function loginHandler(req: Request, res: Response) {
     if (!user) {
       return res.status(400).json({
         message: "Invalid email or password",
+      });
+    }
+
+    if (!user.passwordHash) {
+      return res.status(400).json({
+        message:
+          "This account uses Google sign-in. Please use Google to log in.",
       });
     }
 
@@ -158,6 +185,23 @@ export async function loginHandler(req: Request, res: Response) {
       return res.status(403).json({
         message: "Please verify your email before logging in",
       });
+    }
+
+    if(user.twoFactorEnabled){
+
+      if(!twoFactorCode || typeof twoFactorCode){
+        return res.status(400).json({
+          message: "Two factor code is required"
+        })
+      }
+
+      if(!user.twoFactorSecret){
+        return res.status(400).json({
+          message: "Two factor misconfigured"
+        })
+      }
+
+
     }
 
     const accessToken = createAccessToken(
@@ -359,4 +403,132 @@ export async function resetPasswordHandler(req: Request, res: Response) {
       message: "Internal server error",
     });
   }
+}
+
+export async function googleAuthStartHandler(req: Request, res: Response) {
+  try {
+    const client = getGoogleClient();
+
+    const url = client.generateAuthUrl({
+      access_type: "offline",
+      prompt: "consent",
+      scope: ["openid", "email", "profile"],
+    });
+
+    return res.redirect(url);
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ message: "Internal server error" });
+  }
+}
+
+export async function googleAuthCallbackHandler(req: Request, res: Response) {
+  const code = req.query.code as string;
+
+  if (!code) {
+    return res.status(400).json({ message: "Authorization code missing" });
+  }
+
+  try {
+    const client = getGoogleClient();
+
+    const { tokens } = await client.getToken(code);
+    client.setCredentials(tokens);
+
+    const ticket = await client.verifyIdToken({
+      idToken: tokens.id_token!,
+      audience: client._clientId!,
+    });
+
+    const payload = ticket.getPayload();
+
+    if (!payload) {
+      return res.status(400).json({ message: "Invalid token" });
+    }
+
+    const { email, name } = payload;
+
+    if (!email) {
+      return res.status(400).json({ message: "Email not provided by Google" });
+    }
+
+    const normalizedEmail = email.toLowerCase().trim();
+
+    let user = await User.findOne({ email: normalizedEmail });
+
+    if (!user) {
+      user = await User.create({
+        name: name ?? null,
+        email: normalizedEmail,
+        role: "user",
+        isEmailVerified: true,
+        twoFactorEnabled: false,
+      });
+    }
+
+    const accessToken = createAccessToken(
+      user.id,
+      user.role,
+      user.tokenVersion
+    );
+
+    const refreshToken = createRefreshToken(user.id, user.tokenVersion);
+
+    const isProd = process.env.NODE_ENV === "production";
+
+    res.cookie("refreshToken", refreshToken, {
+      httpOnly: true,
+      secure: isProd,
+      sameSite: "lax",
+      maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
+    });
+
+    return res.json({
+      message: "Login successful",
+      accessToken,
+      user: {
+        id: user.id,
+        email: user.email,
+        role: user.role,
+        isEmailVerified: user.isEmailVerified,
+        twoFactorEnabled: user.twoFactorEnabled,
+      },
+    });
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ message: "Internal server error" });
+  }
+}
+
+export async function twoFASetuphandler(req: Request, res: Response) {
+  const authReq = req as any;
+  const authUser = authReq.user;
+
+  if(!authUser){
+    return res.status(401).json({
+      message: 'Not authenticated'
+    })
+  }
+
+  try {
+    const user = await User.findById(authUser.id)
+
+    if(!user){
+      return res.status(404).json({
+        message: "User not found",
+      });
+    }
+
+    const secret = authenticator.generateSecret();
+
+    const issuer = 'NodeAuth'
+    
+
+  } catch (error) {
+    console.log(error)
+    return res.status(500).json({
+      message: "Internal server error",
+    })
+  }
+
 }

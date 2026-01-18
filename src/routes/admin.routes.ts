@@ -2,7 +2,6 @@ import { Request, Response, NextFunction, Router } from "express";
 import requireAuth from "../middleware/requireAuth";
 import requireRole from "../middleware/requireRole";
 import { User } from "../models/user.model";
-import { email } from "zod";
 
 const router = Router();
 
